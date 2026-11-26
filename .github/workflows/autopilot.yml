@@ -1,0 +1,21 @@
+name: Autopilot tick
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the autopilot endpoint
+        run: |
+          if [ -z "${{ secrets.AUTOREEL_BASE_URL }}" ] || [ -z "${{ secrets.AUTOREEL_CRON_SECRET }}" ]; then
+            echo "AUTOREEL_BASE_URL / AUTOREEL_CRON_SECRET secrets are not set"
+            exit 0
+          fi
+          curl -fsS -X POST "${{ secrets.AUTOREEL_BASE_URL }}/api/autopilot/tick" \
+            -H "x-cron-secret: ${{ secrets.AUTOREEL_CRON_SECRET }}" \
+            -H "content-type: application/json" \
+            -d '{}'
