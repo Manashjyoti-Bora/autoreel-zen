@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "autoreel-zen",
+  "main": "dist/worker/index.js",
+  "compatibility_date": "2025-11-01",
+  "assets": {
+    "directory": "dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "autoreel-zen",
+      "database_id": "6f1c2d84-3a7b-4c9e-9f1a-2b3c4d5e6f70"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "autoreel-zen-media"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "AUTOREEL ZEN"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
