@@ -40,9 +40,10 @@ const BLOCKS: Array<{ id: string; label: string; eyebrow: string; title: string;
         code: 'cd ~\ngit clone https://github.com/Manashjyoti-Bora/autoreel-zen.git\ncd autoreel-zen\nls package.json',
       },
       {
-        title: '4 - Install and start',
-        why: 'npm run dev builds the client + worker and serves on port 3000.',
-        code: 'cd ~/autoreel-zen\nnpm install\nnpm run dev',
+        title: '4 - Install and build',
+        why: 'wrangler is an optional dependency, so Android skips its workerd binary instead of aborting the install. The build only needs vite and esbuild.',
+        code: 'cd ~/autoreel-zen\nnpm install\nnpm run check',
+        note: 'The Unsupported platform: android arm64 error is expected and harmless. Deploy from GitHub, not the phone.',
       },
       {
         title: '5 - Keep it alive in the background',
@@ -55,26 +56,26 @@ const BLOCKS: Array<{ id: string; label: string; eyebrow: string; title: string;
     id: 'cloudflare',
     label: 'Cloudflare deploy',
     eyebrow: 'Free hosting',
-    title: 'Put it online for 24x7 (no phone needed)',
+    title: 'Put it online for 24x7 (GitHub deploys it)',
     intro:
-      'A laptop or phone can sleep. Deployed on Cloudflare Workers the studio keeps running even when your device is off. That is the phone-free part.',
+      'A laptop or phone can sleep. .github/workflows/deploy.yml builds the Worker on GitHub, creates D1 + R2 if they are missing, and deploys it. Your phone never installs wrangler and never builds anything.',
     steps: [
       {
-        title: '1 - Log in and create the storage',
-        why: 'D1 holds posts and settings, R2 holds images. Both have free tiers.',
-        code: 'cd ~/autoreel-zen\nnpx wrangler login\nnpx wrangler d1 create autoreel-zen\nnpx wrangler r2 bucket create autoreel-zen-media',
-        note: 'Copy the printed database_id into wrangler.jsonc.',
+        title: '1 - Add the Cloudflare credentials',
+        why: 'Cloudflare, My Profile, API Tokens, use the Edit Cloudflare Workers template. The account id is on the right side of any dashboard page.',
+        code: 'GitHub, Settings, Secrets and variables, Actions\nCLOUDFLARE_API_TOKEN = <token with Workers + D1 + R2 edit>\nCLOUDFLARE_ACCOUNT_ID = <your account id>',
       },
       {
-        title: '2 - Build and deploy',
-        why: 'The build writes dist/client and dist/worker, which wrangler.jsonc points at.',
-        code: 'npm run build\nnpx wrangler deploy',
+        title: '2 - Add the app secrets',
+        why: 'The workflow pushes them to the Worker on every deploy. Never commit them.',
+        code: 'APP_PASSWORD   = the studio password\nSESSION_SECRET = a random string\nCRON_SECRET    = a random string\nGROQ_API_KEY   = optional free model key',
+        note: 'APP_ORIGIN is optional: the Worker uses the request origin when it is unset.',
       },
       {
-        title: '3 - Set the secrets',
-        why: 'Never commit these. wrangler stores them encrypted.',
-        code: 'npx wrangler secret put APP_PASSWORD\nnpx wrangler secret put SESSION_SECRET\nnpx wrangler secret put CRON_SECRET\nnpx wrangler secret put APP_ORIGIN',
-        note: 'Add GROQ_API_KEY or GEMINI_API_KEY to use a real model; without one the deterministic draft engine writes.',
+        title: '3 - Push to main',
+        why: 'Actions, Deploy to Cloudflare builds, creates autoreel-zen (D1) and autoreel-zen-media (R2), then deploys. Repeat pushes redeploy.',
+        code: 'git add -A && git commit -m "deploy" && git push origin main\n# or: Actions, Deploy to Cloudflare, Run workflow',
+        note: 'From a laptop you can run the same script: npm run deploy (needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, or wrangler login once).',
       },
     ],
   },
@@ -179,9 +180,9 @@ export function GuideView() {
           each block has its own copy button.
         </p>
         <div className="guide-warning">
-          <strong>Phone-free means Cloudflare + GitHub, not the phone.</strong> Deploy with wrangler deploy, add two
-          GitHub secrets, and the hourly workflow keeps writing and posting while every device of yours stays off.
-          Termux is only a local test bench.
+          <strong>Phone-free means Cloudflare + GitHub, not the phone.</strong> Push to main and
+          .github/workflows/deploy.yml builds, creates D1 + R2 and deploys; the hourly workflow then keeps posting
+          while every device of yours stays off. Termux is only a local test bench, and it never needs wrangler.
         </div>
         <div className="guide-warning">
           <strong>Why your clone had no package.json:</strong> the repository only contained a README until now. The

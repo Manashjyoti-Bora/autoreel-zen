@@ -230,7 +230,7 @@ api.post('/compose', async (c) => {
   if (topic.length < 2) return c.json({ error: 'Give the swarm a topic first' }, 400);
   const count = Math.min(5, Math.max(1, Number(body.count) || 1));
   const tone: Tone = TONES.includes(body.tone as Tone) ? (body.tone as Tone) : 'zen';
-  const format: Format = FORMATS.includes(body.format as Format) ? (body.format as Format) : 'photo';
+  const format: Format = FORMATS.includes(body.format as Format) ? (body.format as Format) : 'reel';
   const language: Lang = LANGS.includes(body.language as Lang) ? (body.language as Lang) : 'as';
 
   const campaign = await insertCampaign(c.env, {
@@ -495,7 +495,7 @@ app.get('/health', (c) =>
   c.json({
     ok: true,
     app: 'autoreel-zen',
-    version: '1.3.0',
+    version: '1.5.0',
     remix: true,
     reels: true,
     agents: AGENTS.length,

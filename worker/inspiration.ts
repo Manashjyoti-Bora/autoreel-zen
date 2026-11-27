@@ -413,7 +413,7 @@ Return JSON: { "ideas": [ { "angle": "", "topic": "", "hook": "", "why": "", "to
           hook: hook.slice(0, 180),
           why: (typeof item.why === 'string' ? item.why : '').slice(0, 140),
           tone: coerceTone(item.tone, 'zen'),
-          format: coerceFormat(item.format, 'photo'),
+          format: coerceFormat(item.format, 'reel'),
         });
       }
       if (ideas.length >= 3) return { ideas: ideas.slice(0, 5), model: `${provider.id}/${provider.model}` };

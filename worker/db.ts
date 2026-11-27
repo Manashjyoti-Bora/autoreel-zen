@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS settings (
   slots TEXT NOT NULL DEFAULT '["09:30","13:30","19:30"]',
   utc_offset_minutes INTEGER NOT NULL DEFAULT 330,
   default_tone TEXT NOT NULL DEFAULT 'zen',
-  default_format TEXT NOT NULL DEFAULT 'photo',
+  default_format TEXT NOT NULL DEFAULT 'reel',
   default_language TEXT NOT NULL DEFAULT 'as',
   auto_continue INTEGER NOT NULL DEFAULT 1,
   seed_topic TEXT NOT NULL DEFAULT '',
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS posts (
   visual_source TEXT NOT NULL DEFAULT '',
   reel_script TEXT NOT NULL DEFAULT '',
   video_url TEXT NOT NULL DEFAULT '',
-  format TEXT NOT NULL DEFAULT 'photo',
+  format TEXT NOT NULL DEFAULT 'reel',
   tone TEXT NOT NULL DEFAULT 'zen',
   language TEXT NOT NULL DEFAULT 'as',
   status TEXT NOT NULL DEFAULT 'draft',
@@ -101,15 +101,39 @@ export function ensureSchema(env: Env): Promise<void> {
         await env.DB.prepare(statement).run();
       }
       await ensurePostColumns(env);
+      await ensureSettingsColumns(env);
       await env.DB.prepare(
         `INSERT OR IGNORE INTO settings (id, seed_topic, brand, vision) VALUES (1, '', 'Autoreel Zen', 'A calm daily account about one clear idea per post.')`,
       ).run();
+      await promoteReelsFirst(env);
     })().catch((err) => {
       schemaReady = null;
       throw err;
     });
   }
   return schemaReady;
+}
+
+/** Settings columns added after the first release. */
+async function ensureSettingsColumns(env: Env): Promise<void> {
+  const info = await env.DB.prepare('PRAGMA table_info(settings)').all<{ name: string }>();
+  const existing = new Set((info.results ?? []).map((row) => row.name));
+  if (existing.has('reels_first')) return;
+  await env.DB.prepare('ALTER TABLE settings ADD COLUMN reels_first INTEGER NOT NULL DEFAULT 0').run();
+}
+
+/**
+ * One-time upgrade for databases created before reels came first: those rows
+ * carry the old implicit default ('photo'). Runs once per database, so an owner
+ * who deliberately picks another default afterwards keeps it.
+ */
+async function promoteReelsFirst(env: Env): Promise<void> {
+  const row = await env.DB.prepare('SELECT reels_first FROM settings WHERE id = 1').first<{
+    reels_first: number;
+  }>();
+  if (!row || row.reels_first) return;
+  await env.DB.prepare(`UPDATE settings SET default_format = 'reel' WHERE id = 1`).run();
+  await env.DB.prepare('UPDATE settings SET reels_first = 1 WHERE id = 1').run();
 }
 
 /** Columns added after the first release — CREATE TABLE IF NOT EXISTS will not add them. */

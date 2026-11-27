@@ -2,11 +2,21 @@
 
 Hands-free Instagram studio: type one topic — or paste a real reel link — and a 1,000-agent swarm writes it, designs the visual, scores it, schedules it, publishes it, and derives the next idea from the last one. Reels come first. Data lives in D1 and can be committed to GitHub. It runs on free model providers if you want, and ships a catalogue of 255 free / open-source building blocks.
 
+**Free and open source (MIT).** The whole repository — client, Worker, scripts, docs — is public and MIT-licensed, so you can fork it, rebrand it, self-host it on your own Cloudflare account, and ship your own version. No paid tier, no hosted gate, no phone required.
+
 ## Run locally
 
 ```bash
 npm install
 npm run dev          # builds the client + worker, serves on http://localhost:3000
+```
+
+No local `wrangler` (Android, or any machine without `workerd`)? Serve the built client with
+plain Node and point it at a deployed Worker:
+
+```bash
+npm run build
+AUTOREEL_REMOTE=https://autoreel-zen.<subdomain>.workers.dev npm run serve   # http://localhost:3000
 ```
 
 The repository on `main` contains the full source (client, worker, scripts, docs) — a fresh
@@ -18,7 +28,13 @@ Phone / Termux? Use **[TERMUX.md](TERMUX.md)** — it explains the `ENOENT … p
 
 ## Reels first
 
-Reels are the default format, not an afterthought. With **Format → Reel** the swarm adds
+Reels are the **stored default format**, not an afterthought: new databases are created with
+`default_format = 'reel'`, the compose API and the remix engine fall back to `reel`, and the
+hourly autopilot produces reels unless you change the default. An existing database is upgraded
+once — the old implicit `photo` default is flipped to `reel` a single time and the marker column
+`settings.reels_first` stops it from ever overriding a choice you made afterwards.
+
+With **Format → Reel** the swarm adds
 cover-frame, subtitles, loop-maker and audio-mood agents to the trace and produces:
 
 - a timed shot list — `0-3s | on-screen text | what the camera shows`, six shots, loop point at the end
@@ -77,31 +93,49 @@ Without an image key the visual engine uses keyless stock photos and every card 
 
 ## Hands-free 24×7
 
-Phone-free means **Cloudflare + GitHub, not the phone**: `wrangler deploy` puts the Worker and
-its cron route online, and `.github/workflows/autopilot.yml` wakes it hourly. Add two repo
-secrets and nothing of yours needs to be powered on:
+Phone-free means **Cloudflare + GitHub, not the phone**. `.github/workflows/deploy.yml` builds
+the Worker on a GitHub runner, creates the D1 database and R2 bucket if they are missing, and
+deploys. A phone never installs `wrangler` and never builds anything.
+
+### One-time GitHub setup
+
+**Settings → Secrets and variables → Actions → New repository secret:**
 
 | Secret | Value |
 | --- | --- |
-| `AUTOREEL_BASE_URL` | your deployed origin, no trailing slash |
-| `AUTOREEL_CRON_SECRET` | same value as the Worker's `CRON_SECRET` |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → My Profile → API Tokens → *Edit Cloudflare Workers* template |
+| `CLOUDFLARE_ACCOUNT_ID` | right-hand side of any Cloudflare dashboard page |
+| `APP_PASSWORD` | the studio password (without it the dashboard is public) |
+| `SESSION_SECRET` | optional separate cookie-signing key (recommended) |
+| `CRON_SECRET` | random string; the hourly tick requires it |
+| `AUTOREEL_BASE_URL` | your `https://autoreel-zen.<subdomain>.workers.dev` origin |
+| `AUTOREEL_CRON_SECRET` | same value as `CRON_SECRET` |
 
-Then enable the workflow under **Actions → Autopilot tick**.
+Then push to `main` (or **Actions → Deploy to Cloudflare → Run workflow**). The first run
+creates `autoreel-zen` (D1) and `autoreel-zen-media` (R2), writes `wrangler.deploy.jsonc` with
+the real database id, and deploys. `APP_ORIGIN` is optional — the Worker derives the origin
+from each request when it is unset.
+
+Enable the hourly loop under **Actions → Autopilot tick → Enable workflow**. Nothing of yours
+needs to be switched on after that.
+
+### Deploying from a laptop instead
+
+The same script the workflow uses runs locally:
 
 ```bash
-npm install -g wrangler
-wrangler login
-wrangler d1 create autoreel-zen
-wrangler r2 bucket create autoreel-zen-media   # paste the d1 id into wrangler.jsonc
-npm run build
-wrangler deploy
-wrangler secret put APP_PASSWORD
-wrangler secret put SESSION_SECRET
-wrangler secret put CRON_SECRET
-wrangler secret put APP_ORIGIN
+export CLOUDFLARE_API_TOKEN=…        # or run `npx wrangler login` once
+export CLOUDFLARE_ACCOUNT_ID=…
+npm run deploy                      # setup D1 + R2, build, deploy
 ```
 
-Run those from a laptop or a phone — either works, and after the deploy neither has to stay on.
+`npm run deploy` calls `node scripts/cloudflare.mjs deploy`, which is idempotent — running it
+again reuses the existing database and bucket. It refuses to guess: if the ids cannot be
+resolved it stops and tells you what is missing instead of deploying a broken config.
+
+> Termux / Android: `wrangler` is an **optional** dependency because its `workerd` binary has no
+> Android build. `npm install` therefore succeeds and `npm run check` works on the phone, but
+> `npm run deploy` must run on GitHub or a laptop. See [TERMUX.md](TERMUX.md).
 
 ## Free model chain
 
@@ -142,3 +176,10 @@ Add a fine-grained token with `contents: write` for the target repo, then press 
 - The 1,000 agents are a real registry of 104 hand-written specialists plus 896 generated review lanes (8 departments × 125). Around two dozen entries make model calls; the rest are deterministic checks and transforms, and generated entries are marked `rule`. The trace panel shows exactly which ran, with real timings. A bigger roster is a better checklist, not more intelligence — 1,000 passing checks still cannot promise a viral post.
 - The virality number is a rule-based heuristic, not a prediction. Nothing can guarantee a viral post.
 - Cost guard: generated agents never spend tokens, and the copy chain stops at the first working provider, so adding more free keys cannot increase spend.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Use it, fork it, sell what you build with it; keep the copyright
+notice. Contributions are welcome as pull requests against `main`: run `npm install` and
+`npm run check` before opening one, and keep every claim in the UI honest (no guaranteed
+virality, no invented features).

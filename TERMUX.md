@@ -1,117 +1,119 @@
-# Termux → running AUTOREEL ZEN on your phone
+# Termux → the phone is optional
 
-This whole page is optional. **Phone-free 24×7 means Cloudflare + GitHub, not the phone**; Termux is
-only a local test bench. If you just want the studio online, read
-[README → Hands-free 24×7](README.md#hands-free-24x7) instead.
+This page is only for running the studio **locally on Android**. Nothing here is needed for
+24×7: that is **Cloudflare + GitHub**, and it builds and deploys without your phone
+(see [README → Hands-free 24×7](README.md#hands-free-24x7)).
 
-## What your errors meant
+## The two errors you hit
 
+### `npm error path …/node_modules/workerd/install.js` → `Unsupported platform: android arm64 LE`
+
+`wrangler` ships a native binary (`workerd`) that does not exist for Android. It used to be a
+normal dependency, so one missing Android build aborted the whole `npm install` and `vite`
+never got installed — which is why `npm run build` then said `vite: not found`.
+
+That is fixed: `wrangler` is now an **optional** dependency. On Termux npm skips it, prints a
+warning, and finishes installing everything the build needs. You do not deploy from the phone,
+so the missing binary costs you nothing.
+
+### `npm error enoent Could not read package.json`
+
+You ran `npm` outside the project folder, or the clone was empty. Check first:
+
+```bash
+cd ~/autoreel-zen
+ls package.json
 ```
-npm error path /data/data/com.termux/files/home/autoreel-zen/package.json
-npm error enoent Could not read package.json
-```
 
-`npm run` works in the folder you are standing in. That clone was empty because the repository
-only held a README at the time — it is not a Termux problem, and there was nothing to run.
-
-The repository now contains the full source. Pull it:
+If that fails, clone again:
 
 ```bash
 cd ~
-ls package.json || git clone https://github.com/Manashjyoti-Bora/autoreel-zen.git
+rm -rf autoreel-zen
+git clone https://github.com/Manashjyoti-Bora/autoreel-zen.git
+cd autoreel-zen
+```
+
+## Install and run the interface on the phone
+
+`npm run serve` serves the built client with plain Node — no `wrangler`, no `workerd`, so it
+works on Android. It forwards `/api` to your deployed Worker, so the phone shows the real
+interface with real data while the 24×7 engine stays on Cloudflare.
+
+```bash
 cd ~/autoreel-zen
 git pull origin main
-ls package.json worker src
+npm install                    # wrangler is skipped on Android — that warning is expected
+npm run build                  # typecheck-free build, always works on Android
+AUTOREEL_REMOTE=https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev npm run serve
 ```
 
-You must see `package.json`, `worker/` and `src/` before going further.
+Open **http://localhost:3000** on the phone (or `http://<phone-ip>:3000` from the same Wi-Fi).
+Without `AUTOREEL_REMOTE` the interface still loads but `/api` answers 502 with a reminder.
 
-```
-Something wicked happened resolving 'termux.net:https' (7)
-```
+`npm run start` (the `wrangler dev` path) cannot work on Android — `workerd` has no arm64 Termux
+build. Use `npm run serve` there; use `npm run start` only on a laptop.
 
-That is the phone's DNS or package mirror, not the project. Switch the mirror once:
+## Keep the phone server alive 24×7
+
+Termux is killed by Android's battery optimiser unless you hold a wake lock. One-time, inside
+Termux:
 
 ```bash
-termux-change-repo
-# choose: Main repository → Mirror by Grimler or Tsinghua, confirm
-pkg update -y && pkg upgrade -y
+termux-wake-lock            # from the termux-api package: pkg install termux-api
+mkdir -p ~/.shortcuts && cat > ~/.shortcuts/autoreel <<'SH'
+#!/data/data/com.termux/files/usr/bin/bash
+cd ~/autoreel-zen
+export AUTOREEL_REMOTE=https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev
+exec node scripts/serve-local.mjs
+SH
+chmod +x ~/.shortcuts/autoreel
 ```
 
-You already have Node 26 and npm 11, so you can skip `pkg install` entirely.
-
-## 1. Install and run
+The `~/.shortcuts` script is what the Termux:Widget launcher tile runs, so one tap restarts it
+after a reboot. To run it in the background instead:
 
 ```bash
 cd ~/autoreel-zen
-npm install
-npm run dev
-```
-
-Open `http://localhost:3000` in the phone browser. On the same Wi-Fi, other devices can use
-`http://<phone-ip>:3000`.
-
-## 2. Keep it alive
-
-Closing Termux stops the server:
-
-```bash
-cd ~/autoreel-zen
-nohup npm run dev > ~/autoreel.log 2>&1 &
+export AUTOREEL_REMOTE=https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev
+nohup node scripts/serve-local.mjs > ~/autoreel.log 2>&1 &
+echo $! > ~/autoreel.pid
 tail -f ~/autoreel.log
 ```
 
-Stop it later with the recorded process, not a broad pattern:
+Stop it with the recorded pid, never a broad pattern:
 
 ```bash
-pkill -f "wrangler dev"
+kill "$(cat ~/autoreel.pid)" && rm -f ~/autoreel.pid
 ```
 
-## 3. When something breaks
+The phone server is a convenience screen. The thing that keeps publishing at 03:00 while the
+phone is asleep is the Cloudflare Worker plus the hourly GitHub Actions tick — so the studio is
+still 24×7 even when Termux is closed.
+
+## The real phone-free path
+
+Do this once from any machine, or skip it entirely and let GitHub do it:
 
 ```bash
-cd ~/autoreel-zen
-rm -rf node_modules package-lock.json
-npm install
-npm run build
-```
-
-`npm error ENOENT` → wrong folder.
-`command not found: wrangler` → use `npx wrangler …`.
-`EADDRINUSE` → something already uses port 3000; run `npm run start` with `--port 3001`.
-
-## 4. The real "phone free" path: Cloudflare + GitHub
-
-A phone is a bad server: it sleeps, the battery optimiser kills Termux, and mobile networks block
-inbound traffic. Deploy once and nothing of yours needs to be switched on:
-
-```bash
-cd ~/autoreel-zen
-npx wrangler login
-npx wrangler d1 create autoreel-zen
-npx wrangler r2 bucket create autoreel-zen-media
-# paste the printed database_id into wrangler.jsonc
-npm run build
-npx wrangler deploy
+npm run deploy       # creates D1 + R2, builds, deploys
 npx wrangler secret put APP_PASSWORD
 npx wrangler secret put SESSION_SECRET
 npx wrangler secret put CRON_SECRET
-npx wrangler secret put APP_ORIGIN
-npx wrangler secret put GROQ_API_KEY   # optional, free tier
+npx wrangler secret put GROQ_API_KEY    # optional, free tier
 ```
 
-Then in GitHub: **Settings → Secrets and variables → Actions** and add
+On the phone, do not run these — `workerd` has no Android build. Push to GitHub instead and
+`.github/workflows/deploy.yml` does the same thing on a Linux runner:
 
-| Secret | Value |
-| --- | --- |
-| `AUTOREEL_BASE_URL` | `https://autoreel-zen.<your-subdomain>.workers.dev` |
-| `AUTOREEL_CRON_SECRET` | the same value you gave `CRON_SECRET` |
+1. GitHub → **Settings → Secrets and variables → Actions**
+2. Add `CLOUDFLARE_API_TOKEN` (Workers + D1 + R2 edit permissions) and `CLOUDFLARE_ACCOUNT_ID`.
+3. Add `APP_PASSWORD`, `SESSION_SECRET`, `CRON_SECRET` and any model keys you use.
+4. Push to `main`, or run **Actions → Deploy to Cloudflare → Run workflow**.
 
-The workflow in `.github/workflows/autopilot.yml` calls `/api/autopilot/tick` every hour.
-Enable it under **Actions → Autopilot tick → Enable workflow**.
-
-That is the whole hands-free loop: GitHub wakes it up, the Worker writes, designs, scores,
-schedules and publishes reels. Nothing of yours needs to be switched on.
+Then enable the hourly tick: add `AUTOREEL_BASE_URL` (your `*.workers.dev` origin) and
+`AUTOREEL_CRON_SECRET` (same value as `CRON_SECRET`) as repository secrets, and enable
+**Actions → Autopilot tick**.
 
 ---
 

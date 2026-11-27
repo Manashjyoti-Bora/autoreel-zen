@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .wrangler/
+wrangler.deploy.jsonc
+.preview/
+.devcheck/
 .dev.vars
 .env
 .env.*
