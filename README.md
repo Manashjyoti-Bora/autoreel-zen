@@ -16,8 +16,12 @@ plain Node and point it at a deployed Worker:
 
 ```bash
 npm run build
-AUTOREEL_REMOTE=https://autoreel-zen.<subdomain>.workers.dev npm run serve   # http://localhost:3000
+npm run serve -- https://autoreel-zen.<subdomain>.workers.dev   # saves the URL, serves :3000
+npm run serve                                                  # next time: URL is remembered
 ```
+
+The Worker URL is stored in `~/.autoreel-remote` (override with `AUTOREEL_REMOTE` for one run,
+or `AUTOREEL_REMOTE_FILE` for another location). `npm run serve -- --forget` clears it.
 
 The repository on `main` contains the full source (client, worker, scripts, docs) — a fresh
 `git clone` is enough to run it.
@@ -48,6 +52,21 @@ field (`POST /api/posts/:id/video`), then Publish. The publisher calls the Graph
 video is rendered for you — the swarm writes the reel, the kit tells you exactly what to
 shoot, and the same endpoint posts it hands-free once the URL exists. Without a video URL
 Publish returns the reel kit instead of pretending something was posted.
+
+## Carousels
+
+**Format → Carousel** produces a real 2–10 slide post, not a single image with carousel
+labelled on it. The brief gets a slide line per frame (the model writes them when a key is set,
+the draft engine otherwise), one image is generated and stored per slide, and the post card
+shows the strip with its slide count.
+
+Publish then uses the Instagram carousel flow on the Graph API: every slide becomes its own
+child container (`is_carousel_item=true`), each is polled until `FINISHED`, one `CAROUSEL`
+container is built from the child ids with the caption, and that container is published as a
+single post. Fewer than 2 slides or a non-https slide URL is refused with a message that says
+which slide is wrong, and `POST /api/posts/:id/publish` returns the Graph error text instead
+of a silent failure. Slides live in R2 and are served from `/api/media/<key>`, so they are
+publicly reachable over https exactly as Instagram requires.
 
 ## Remix a real post
 

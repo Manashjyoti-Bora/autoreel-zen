@@ -32,6 +32,8 @@ export function PostCard({
 }) {
   const hasMedia = !!post.mediaUrl;
   const isReel = post.format === 'reel';
+  const isCarousel = post.format === 'carousel';
+  const slideCount = post.slides.length;
   const [videoUrl, setVideoUrl] = useState(post.videoUrl ?? '');
   const [savingVideo, setSavingVideo] = useState(false);
   const [videoNote, setVideoNote] = useState('');
@@ -73,7 +75,24 @@ export function PostCard({
           <span className="post-source">stock visual</span>
         ) : null}
         {isReel ? <span className="post-source reel-badge">reel</span> : null}
+        {isCarousel && slideCount ? (
+          <span className="post-source carousel-badge">{slideCount} slides</span>
+        ) : null}
       </div>
+
+      {isCarousel && slideCount ? (
+        <div className="post-slides">
+          {post.slides.map((slide, index) => (
+            <img
+              key={`${slide.mediaKey}-${index}`}
+              src={`/api/media/${slide.mediaKey}`}
+              alt={slide.altText || `Slide ${index + 1}`}
+              title={slide.caption || `Slide ${index + 1}`}
+              loading="lazy"
+            />
+          ))}
+        </div>
+      ) : null}
 
       <div className="post-body">
         <h3 className="post-title">{post.title || post.topic}</h3>
@@ -101,6 +120,14 @@ export function PostCard({
             </summary>
             <pre>{post.reelScript || 'Regenerate this post as a reel to get the shot list.'}</pre>
           </details>
+        ) : null}
+
+        {isCarousel ? (
+          <p className="field-note">
+            {slideCount >= 2
+              ? `${slideCount} slides ready — Publish posts them as one Instagram carousel.`
+              : 'No slides yet — press Produce to build 2–10 slides before publishing.'}
+          </p>
         ) : null}
 
         {isReel ? (
@@ -149,10 +176,10 @@ export function PostCard({
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy || !hasMedia}
+              disabled={busy || !hasMedia || (isCarousel && slideCount < 2)}
               onClick={() => onPublish(post)}
             >
-              Publish
+              {isCarousel ? `Publish carousel` : 'Publish'}
             </button>
           )}
           <button

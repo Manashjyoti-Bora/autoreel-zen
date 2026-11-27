@@ -495,9 +495,10 @@ app.get('/health', (c) =>
   c.json({
     ok: true,
     app: 'autoreel-zen',
-    version: '1.5.0',
+    version: '1.6.0',
     remix: true,
     reels: true,
+    carousels: true,
     agents: AGENTS.length,
     resources: RESOURCES.length,
     providers: providerStatus(c.env).configured,

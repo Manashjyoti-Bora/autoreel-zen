@@ -7,23 +7,28 @@
  * `dist/client` and forwards `/api/...` and `/images/...` to a deployed Worker,
  * so the interface runs on the phone while the 24x7 backend stays on Cloudflare.
  *
+ * The Worker URL is remembered, so the long command is needed only once:
+ *
  *   npm run build
- *   AUTOREEL_REMOTE=https://autoreel-zen.<subdomain>.workers.dev npm run serve
+ *   npm run serve -- https://autoreel-zen.<subdomain>.workers.dev   # saves + starts
+ *   npm run serve                                                   # after that
  *
  * Environment:
- *   AUTOREEL_REMOTE  origin of the deployed Worker (required for data)
- *   PORT             default 3000
- *   HOST             default 0.0.0.0 so other devices on the LAN can open it
+ *   AUTOREEL_REMOTE       origin of the deployed Worker (overrides the saved one)
+ *   AUTOREEL_REMOTE_FILE  where the URL is saved (default ~/.autoreel-remote)
+ *   PORT                  default 3000
+ *   HOST                  default 0.0.0.0 so other devices on the LAN can open it
  */
 import { createServer, request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { extname, join, resolve, sep } from 'node:path';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = resolve('dist/client');
-const REMOTE = (process.env.AUTOREEL_REMOTE || '').trim().replace(/\/+$/, '');
+const REMOTE_FILE = process.env.AUTOREEL_REMOTE_FILE || join(homedir(), '.autoreel-remote');
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -46,6 +51,94 @@ function isProxied(pathname) {
   return pathname.startsWith('/api') || pathname.startsWith('/images');
 }
 
+/** Accept only a bare http(s) origin — no path, no trailing slash. */
+function normalizeRemote(raw) {
+  const value = (raw || '').trim();
+  if (!value) return '';
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return '';
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+  if (url.pathname !== '/' || url.search || url.hash) return '';
+  return `${url.protocol}//${url.host}`;
+}
+
+function parseArgs(argv) {
+  const parsed = { remote: '', forget: false, help: false };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--help' || arg === '-h') parsed.help = true;
+    else if (arg === '--forget') parsed.forget = true;
+    else if (arg === '--remote' || arg === '--set-remote') parsed.remote = argv[++i] || '';
+    else if (arg.startsWith('--remote=')) parsed.remote = arg.slice('--remote='.length);
+    else if (!arg.startsWith('-') && !parsed.remote) parsed.remote = arg;
+  }
+  return parsed;
+}
+
+async function readSavedRemote() {
+  try {
+    return normalizeRemote(await readFile(REMOTE_FILE, 'utf8'));
+  } catch {
+    return '';
+  }
+}
+
+const args = parseArgs(process.argv.slice(2));
+
+if (args.help) {
+  console.log(
+    [
+      'Usage: npm run serve [--] [worker-url]',
+      '',
+      '  worker-url   https origin of your deployed Worker, e.g.',
+      '               https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev',
+      '               It is saved, so later runs need no URL.',
+      '  --forget     forget the saved URL and exit',
+      '',
+      `Saved in ${REMOTE_FILE}`,
+      'Override with AUTOREEL_REMOTE for a single run.',
+    ].join('\n'),
+  );
+  process.exit(0);
+}
+
+if (args.forget) {
+  try {
+    await writeFile(REMOTE_FILE, '', { mode: 0o600 });
+  } catch {
+    /* nothing saved */
+  }
+  console.log(`Forgot the saved Worker URL (${REMOTE_FILE}).`);
+  process.exit(0);
+}
+
+const supplied = args.remote || process.env.AUTOREEL_REMOTE || '';
+let REMOTE = '';
+let rememberNote = '';
+
+if (supplied) {
+  REMOTE = normalizeRemote(supplied);
+  if (!REMOTE) {
+    console.error(
+      `Not a usable Worker URL: ${supplied}\nUse the bare origin, e.g. https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev`,
+    );
+    process.exit(1);
+  }
+  try {
+    await writeFile(REMOTE_FILE, `${REMOTE}\n`, { mode: 0o600 });
+    rememberNote = `saved for next time in ${REMOTE_FILE}`;
+  } catch (err) {
+    rememberNote = `could not save the URL (${err instanceof Error ? err.message : 'error'})`;
+  }
+} else {
+  REMOTE = await readSavedRemote();
+  if (REMOTE) rememberNote = `remembered from ${REMOTE_FILE}`;
+}
+
 /** Forward one request to the deployed Worker and stream the answer back. */
 function proxy(req, res) {
   if (!REMOTE) {
@@ -53,7 +146,7 @@ function proxy(req, res) {
     res.end(
       JSON.stringify({
         error:
-          'AUTOREEL_REMOTE is not set. Start again with AUTOREEL_REMOTE=https://your-worker.workers.dev npm run serve',
+          'No Worker URL saved yet. Run "npm run serve -- https://your-worker.workers.dev" once, then "npm run serve" works on its own.',
       }),
     );
     return;
@@ -64,7 +157,7 @@ function proxy(req, res) {
     target = new URL(REMOTE);
   } catch {
     res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ error: `AUTOREEL_REMOTE is not a URL: ${REMOTE}` }));
+    res.end(JSON.stringify({ error: `Saved Worker URL is not a URL: ${REMOTE}` }));
     return;
   }
 
@@ -100,7 +193,13 @@ function proxy(req, res) {
 }
 
 async function readStatic(pathname) {
-  const safe = resolve(join(ROOT, decodeURIComponent(pathname)));
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+  const safe = resolve(join(ROOT, decoded));
   if (safe !== ROOT && !safe.startsWith(ROOT + sep)) return null;
   try {
     const info = await stat(safe);
@@ -147,5 +246,6 @@ server.listen(PORT, HOST, () => {
   console.log(`AUTOREEL ZEN serving ${ROOT}`);
   console.log(`  local   → http://localhost:${PORT}`);
   console.log(`  network → http://<this-device-ip>:${PORT}`);
-  console.log(`  api     → ${REMOTE || '(not set — /api will answer 502)'}`);
+  console.log(`  api     → ${REMOTE || '(not set — /api will answer 502)'}${rememberNote ? ` (${rememberNote})` : ''}`);
+  if (REMOTE) console.log('  next time → npm run serve');
 });

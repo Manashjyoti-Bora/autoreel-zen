@@ -49,6 +49,13 @@ export interface Settings {
   imageReady: boolean;
 }
 
+/** One image of a carousel post. `mediaKey` points into R2 (served at /api/media/…). */
+export interface Slide {
+  mediaKey: string;
+  caption: string;
+  altText: string;
+}
+
 export interface Post {
   id: string;
   campaignId: string;
@@ -66,6 +73,8 @@ export interface Post {
   visualSource: string;
   reelScript: string;
   videoUrl: string;
+  /** 2–10 slides for a carousel post; empty for every other format. */
+  slides: Slide[];
   format: Format;
   tone: Tone;
   language: Lang;

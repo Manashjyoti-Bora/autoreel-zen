@@ -12,6 +12,8 @@ export interface Brief {
   cta: string;
   nextAngle: string;
   reelScript: string;
+  /** 2–10 slide lines for a carousel; empty for every other format. */
+  slides: string[];
 }
 
 export interface BriefResult {
@@ -54,6 +56,17 @@ function cleanJson(text: string): string {
 
 function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function asSlides(value: unknown, fallback: string[]): string[] {
+  const list = Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim().slice(0, 140))
+        .filter(Boolean)
+    : [];
+  const chosen = list.length >= 2 ? list : fallback;
+  return chosen.slice(0, 10);
 }
 
 function asTags(value: unknown): string[] {
@@ -103,9 +116,10 @@ Rules:
 - cta: max 8 words.
 - nextAngle: a natural follow-up post idea in max 12 words.
 - reelScript: ONLY when the format is reel — 6 lines, one per shot, each written as "0-3s | on-screen text (max 7 words) | what the camera shows". Start at 0s and end by 30s. Empty string for every other format.
+- slides: ONLY when the format is carousel — an array of 2-10 slide lines, one sentence each (max 90 characters): slide 1 is the hook, the middle slides each make one point, the last slide carries the action. Empty array for every other format.
 - Never promise guaranteed virality, income, or medical results.
 
-JSON keys: title, hook, caption, hashtags, visualPrompt, altText, cta, nextAngle, reelScript.`;
+JSON keys: title, hook, caption, hashtags, visualPrompt, altText, cta, nextAngle, reelScript, slides.`;
 
   const failures: string[] = [];
   for (const provider of candidates) {
@@ -152,6 +166,10 @@ JSON keys: title, hook, caption, hashtags, visualPrompt, altText, cta, nextAngle
           input.format === 'reel'
             ? asString(parsed.reelScript, fallback.reelScript).slice(0, 1400)
             : '',
+        slides:
+          input.format === 'carousel'
+            ? asSlides(parsed.slides, fallback.slides)
+            : [],
       };
       if (!brief.hashtags.length) brief.hashtags = fallback.hashtags;
       return {
@@ -261,7 +279,42 @@ export function offlineBrief(input: {
     cta: input.language === 'as' ? 'আজি এটা কৰি চাওক' : input.language === 'en' ? 'Try it once today' : 'Aaj ek baar karo',
     nextAngle: `A follow-up post answering the first objection about ${topic}`,
     reelScript: input.format === 'reel' ? offlineReelScript(topic, input) : '',
+    slides: input.format === 'carousel' ? offlineSlidePlan(topic, input.language) : [],
   };
+}
+
+/**
+ * Deterministic carousel plan: five slides that each carry one idea, so the
+ * carousel can be produced and published without a model key. Slide text is
+ * the line the owner would typeset; the generated image is the background.
+ */
+export function offlineSlidePlan(topic: string, language: Lang): string[] {
+  const t = topic.trim().replace(/\s+/g, ' ').slice(0, 70);
+  if (language === 'as') {
+    return [
+      `${t} — ৫খন স্লাইডত, চুটি কৰি`,
+      `প্ৰথমতে: ${t} কিয় গুৰুত্বপূৰ্ণ`,
+      'দ্বিতীয়তে: যিটো আটাইতকৈ সহজ পদক্ষেপ',
+      'তৃতীয়তে: যিটো আপুনি আজি কৰিব পাৰে',
+      'শেষত: এটা কথাত ধৰি থাকক — ছেভ কৰি থওক',
+    ];
+  }
+  if (language === 'hinglish') {
+    return [
+      `${t} — 5 slides mein, seedhi baat`,
+      `Pehle: ${t} kyun matter karta hai`,
+      'Doosra: sabse aasaan pehla step',
+      'Teesra: aaj hi jo kar sakte ho',
+      'Aakhir: ek cheez pakdo — save karo',
+    ];
+  }
+  return [
+    `${t} — five slides, kept short`,
+    `First: why ${t} matters`,
+    'Second: the smallest honest first step',
+    'Third: the one thing you can do today',
+    'Last: hold one line — save this',
+  ];
 }
 
 /**

@@ -4,55 +4,76 @@ This page is only for running the studio **locally on Android**. Nothing here is
 24×7: that is **Cloudflare + GitHub**, and it builds and deploys without your phone
 (see [README → Hands-free 24×7](README.md#hands-free-24x7)).
 
-## The two errors you hit
+## Fix the exact errors from the screenshots
 
-### `npm error path …/node_modules/workerd/install.js` → `Unsupported platform: android arm64 LE`
+Your paste hit four errors in a row. They all come from one thing: an **old clone** (it said
+`autoreel-zen@1.3.0`), from before the phone server existed. `node scripts/serve-local.mjs`
+and `npm run serve` did not exist in that version, and `wrangler` was still a required
+dependency, so `workerd`'s missing Android build aborted the install and `vite` never arrived.
 
-`wrangler` ships a native binary (`workerd`) that does not exist for Android. It used to be a
-normal dependency, so one missing Android build aborted the whole `npm install` and `vite`
-never got installed — which is why `npm run build` then said `vite: not found`.
+| What you saw | Why | Fix |
+| --- | --- | --- |
+| `fatal: destination path 'autoreel-zen' already exists` | the folder was already cloned | do not clone again — update it (below) |
+| `workerd/install.js … Unsupported platform: android arm64 LE` | old clone had `wrangler` as a required dependency | update to current `main`, where it is **optional** |
+| `vite: not found` | `npm install` aborted before installing `vite` | update, then install again |
+| `Missing script: "serve"` | the clone is from before `npm run serve` | update to current `main` |
 
-That is fixed: `wrangler` is now an **optional** dependency. On Termux npm skips it, prints a
-warning, and finishes installing everything the build needs. You do not deploy from the phone,
-so the missing binary costs you nothing.
-
-### `npm error enoent Could not read package.json`
-
-You ran `npm` outside the project folder, or the clone was empty. Check first:
-
-```bash
-cd ~/autoreel-zen
-ls package.json
-```
-
-If that fails, clone again:
-
-```bash
-cd ~
-rm -rf autoreel-zen
-git clone https://github.com/Manashjyoti-Bora/autoreel-zen.git
-cd autoreel-zen
-```
-
-## Install and run the interface on the phone
-
-`npm run serve` serves the built client with plain Node — no `wrangler`, no `workerd`, so it
-works on Android. It forwards `/api` to your deployed Worker, so the phone shows the real
-interface with real data while the 24×7 engine stays on Cloudflare.
+Update the existing folder — no deleting, no re-cloning:
 
 ```bash
 cd ~/autoreel-zen
 git pull origin main
-npm install                    # wrangler is skipped on Android — that warning is expected
-npm run build                  # typecheck-free build, always works on Android
-AUTOREEL_REMOTE=https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev npm run serve
+grep '"version"' package.json      # must not say 1.3.0
+npm install
+npm run build
+```
+
+`wrangler` is an **optional** dependency now, so on Termux npm skips the missing `workerd`
+binary, prints a warning, and finishes installing everything the build needs. You do not
+deploy from the phone, so that binary costs you nothing. If an old `node_modules` keeps
+failing, remove only that folder and install again:
+
+```bash
+cd ~/autoreel-zen
+rm -rf node_modules
+npm install
+```
+
+`npm error enoent Could not read package.json` means `npm` ran outside the project folder.
+`cd ~/autoreel-zen` first; `ls package.json` must list the file.
+
+## Install and run the interface on the phone
+
+`npm run serve` serves the built client with plain Node — no `wrangler`, no `workerd` — and
+forwards `/api` to your deployed Worker. The Worker URL is **remembered**, so you type it once:
+
+```bash
+cd ~/autoreel-zen
+git pull origin main
+npm install
+npm run build
+npm run serve -- https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev
+```
+
+The URL is saved to `~/.autoreel-remote`. Every run after that is just:
+
+```bash
+cd ~/autoreel-zen && npm run serve
 ```
 
 Open **http://localhost:3000** on the phone (or `http://<phone-ip>:3000` from the same Wi-Fi).
-Without `AUTOREEL_REMOTE` the interface still loads but `/api` answers 502 with a reminder.
+Useful extras:
 
-`npm run start` (the `wrangler dev` path) cannot work on Android — `workerd` has no arm64 Termux
-build. Use `npm run serve` there; use `npm run start` only on a laptop.
+```bash
+npm run serve -- --help      # usage
+npm run serve -- --forget    # forget the saved Worker URL
+```
+
+`AUTOREEL_REMOTE=https://… npm run serve` still works for a one-off URL and also replaces the
+saved one. Without any URL the interface loads but `/api` answers 502 with a reminder.
+
+`npm run start` (the `wrangler dev` path) cannot work on Android — `workerd` has no arm64
+Termux build. Use `npm run serve` there; use `npm run start` only on a laptop.
 
 ## Keep the phone server alive 24×7
 
@@ -60,23 +81,23 @@ Termux is killed by Android's battery optimiser unless you hold a wake lock. One
 Termux:
 
 ```bash
-termux-wake-lock            # from the termux-api package: pkg install termux-api
+pkg install termux-api
+termux-wake-lock
 mkdir -p ~/.shortcuts && cat > ~/.shortcuts/autoreel <<'SH'
 #!/data/data/com.termux/files/usr/bin/bash
+export PATH="$PREFIX/bin:$PATH"
 cd ~/autoreel-zen
-export AUTOREEL_REMOTE=https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev
 exec node scripts/serve-local.mjs
 SH
 chmod +x ~/.shortcuts/autoreel
 ```
 
 The `~/.shortcuts` script is what the Termux:Widget launcher tile runs, so one tap restarts it
-after a reboot. To run it in the background instead:
+after a reboot. To run it in the background instead (the saved URL means no long command):
 
 ```bash
 cd ~/autoreel-zen
-export AUTOREEL_REMOTE=https://autoreel-zen.YOUR-SUBDOMAIN.workers.dev
-nohup node scripts/serve-local.mjs > ~/autoreel.log 2>&1 &
+nohup npm run serve > ~/autoreel.log 2>&1 &
 echo $! > ~/autoreel.pid
 tail -f ~/autoreel.log
 ```
@@ -123,6 +144,8 @@ Then enable the hourly tick: add `AUTOREEL_BASE_URL` (your `*.workers.dev` origi
   token with `instagram_content_publish`. There is no free bypass.
 - Reels need a finished 9:16 mp4 at a public https URL. The app writes the shot list, cover and
   caption; it does not render video.
+- Carousels publish 2–10 real slide images through the Graph API carousel flow. The slide text
+  is written by the swarm, but the app does not typeset that text onto the images.
 - Without a model key the deterministic draft engine writes the posts. They are readable but
   repetitive — a free Groq or Gemini key changes that a lot.
 - No tool can guarantee virality. The score in the UI is a heuristic, not a prediction.

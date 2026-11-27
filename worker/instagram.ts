@@ -188,11 +188,103 @@ export interface PublishPostShape {
 }
 
 const VIDEO_EXTENSION = /\.(mp4|mov|m4v)(\?|#|$)/i;
+const MIN_SLIDES = 2;
+const MAX_SLIDES = 10;
+
+/** One Instagram carousel container: 2–10 child images published as one post. */
+async function publishCarousel(
+  settings: Settings,
+  post: PublishPostShape,
+  slideUrls: string[],
+): Promise<PublishResult> {
+  const urls = slideUrls
+    .map((url) => url.trim())
+    .filter(Boolean)
+    .slice(0, MAX_SLIDES);
+  if (urls.length < MIN_SLIDES) {
+    return {
+      ok: false,
+      error: `A carousel needs ${MIN_SLIDES}–${MAX_SLIDES} slide images and ${urls.length} were given. Regenerate the post to build its slides.`,
+    };
+  }
+  const badIndex = urls.findIndex((url) => !/^https:\/\//i.test(url));
+  if (badIndex >= 0) {
+    return { ok: false, error: `Slide ${badIndex + 1} is not a public https image URL` };
+  }
+
+  const children: string[] = [];
+  for (let index = 0; index < urls.length; index += 1) {
+    const childRes = await graphFetch(
+      `${GRAPH}/${settings.igUserId}/media`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          image_url: urls[index],
+          is_carousel_item: 'true',
+          access_token: settings.igToken,
+        }),
+      },
+      { attempts: 3 },
+    );
+    const child = (await childRes.json()) as { id?: string; error?: GraphError };
+    if (!childRes.ok || !child.id) {
+      return {
+        ok: false,
+        error: `Slide ${index + 1}: ${describe(child, `create ${childRes.status}`)}`,
+      };
+    }
+    children.push(child.id);
+  }
+
+  // Every child container must finish processing before the carousel is built.
+  for (let index = 0; index < children.length; index += 1) {
+    const ready = await waitForContainer(settings, children[index], 10);
+    if (!ready.ready) {
+      const hint = ready.status ? ` (last status: ${ready.status})` : '';
+      return {
+        ok: false,
+        error: `Instagram did not finish processing slide ${index + 1}${hint}. Use a public JPG/PNG under 8 MB at 4:5 or 1:1.`,
+      };
+    }
+  }
+
+  const carouselRes = await graphFetch(
+    `${GRAPH}/${settings.igUserId}/media`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        media_type: 'CAROUSEL',
+        children: children.join(','),
+        caption: captionFor(post),
+        access_token: settings.igToken,
+      }),
+    },
+    { attempts: 3 },
+  );
+  const carousel = (await carouselRes.json()) as { id?: string; error?: GraphError };
+  if (!carouselRes.ok || !carousel.id) {
+    return { ok: false, error: describe(carousel, `carousel create ${carouselRes.status}`) };
+  }
+
+  const ready = await waitForContainer(settings, carousel.id, 12);
+  if (!ready.ready) {
+    const hint = ready.status ? ` (last status: ${ready.status})` : '';
+    return {
+      ok: false,
+      error: `Instagram did not finish building the ${urls.length}-slide carousel${hint}. Publish again once the slides are reachable.`,
+    };
+  }
+
+  return await publishContainer(settings, carousel.id);
+}
 
 export async function publishToInstagram(
   settings: Settings,
   post: PublishPostShape,
   imageUrl: string,
+  slideUrls: string[] = [],
 ): Promise<PublishResult> {
   if (!settings.igUserId || !settings.igToken) {
     return { ok: false, error: 'Instagram is not connected' };
@@ -213,6 +305,14 @@ export async function publishToInstagram(
   }
   if (isReel && !/^https:\/\//i.test(videoUrl)) {
     return { ok: false, error: 'The reel video URL must be https and publicly reachable' };
+  }
+
+  if (post.format === 'carousel') {
+    try {
+      return await publishCarousel(settings, post, slideUrls);
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'network error' };
+    }
   }
 
   try {

@@ -7,6 +7,7 @@ import type {
   Post,
   PostStatus,
   Settings,
+  Slide,
   Tone,
   TrailStep,
 } from '../shared/types';
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS posts (
   visual_source TEXT NOT NULL DEFAULT '',
   reel_script TEXT NOT NULL DEFAULT '',
   video_url TEXT NOT NULL DEFAULT '',
+  slides TEXT NOT NULL DEFAULT '[]',
   format TEXT NOT NULL DEFAULT 'reel',
   tone TEXT NOT NULL DEFAULT 'zen',
   language TEXT NOT NULL DEFAULT 'as',
@@ -143,6 +145,7 @@ async function ensurePostColumns(env: Env): Promise<void> {
   const wanted: Array<[string, string]> = [
     ['reel_script', "TEXT NOT NULL DEFAULT ''"],
     ['video_url', "TEXT NOT NULL DEFAULT ''"],
+    ['slides', "TEXT NOT NULL DEFAULT '[]'"],
   ];
   for (const [name, type] of wanted) {
     if (existing.has(name)) continue;
@@ -293,6 +296,7 @@ interface PostRow {
   visual_source: string;
   reel_script: string;
   video_url: string;
+  slides: string;
   format: string;
   tone: string;
   language: string;
@@ -312,9 +316,27 @@ interface PostRow {
 
 export function mapPost(row: PostRow): Post {
   let hashtags: string[] = [];
+  let slides: Slide[] = [];
   let trail: TrailStep[] = [];
   try {
     hashtags = JSON.parse(row.hashtags) as string[];
+  } catch {
+    /* ignore */
+  }
+  try {
+    const parsed = JSON.parse(row.slides ?? '[]') as unknown;
+    if (Array.isArray(parsed)) {
+      slides = parsed
+        .filter((slide): slide is Slide =>
+          !!slide && typeof slide === 'object' && typeof (slide as Slide).mediaKey === 'string',
+        )
+        .slice(0, 10)
+        .map((slide) => ({
+          mediaKey: slide.mediaKey,
+          caption: typeof slide.caption === 'string' ? slide.caption : '',
+          altText: typeof slide.altText === 'string' ? slide.altText : '',
+        }));
+    }
   } catch {
     /* ignore */
   }
@@ -340,6 +362,7 @@ export function mapPost(row: PostRow): Post {
     visualSource: row.visual_source,
     reelScript: row.reel_script ?? '',
     videoUrl: row.video_url ?? '',
+    slides,
     format: row.format as Format,
     tone: row.tone as Tone,
     language: row.language as Lang,
@@ -424,6 +447,7 @@ export async function updatePost(
     visualSource: string;
     reelScript: string;
     videoUrl: string;
+    slides: Slide[];
     status: PostStatus;
     virality: number;
     scheduledAt: string | null;
@@ -449,6 +473,7 @@ export async function updatePost(
     ['visualSource', 'visual_source'],
     ['reelScript', 'reel_script'],
     ['videoUrl', 'video_url'],
+    ['slides', 'slides'],
     ['status', 'status'],
     ['virality', 'virality'],
     ['scheduledAt', 'scheduled_at'],

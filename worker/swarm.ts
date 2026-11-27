@@ -4,9 +4,10 @@ import type {
   Dept,
   Post,
   Settings,
+  Slide,
   TrailStep,
 } from '../shared/types';
-import { generateBrief, generateImage } from './ai';
+import { generateBrief, generateImage, offlineSlidePlan } from './ai';
 import { expandAgents } from './agents/expand';
 import {
   getSettings,
@@ -362,13 +363,51 @@ export async function producePost(
     push('loop-maker', 'Opens and closes on the same frame', 'ok', 3);
     push('audio-mood', `${post.tone} bed · original audio preferred over trending sounds`, 'ok', 3);
   }
-  const image = await generateImage(env, settings, result.brief.visualPrompt, `${post.topic}-${post.tone}`);
-  const mediaKey = `${post.id}-${Date.now()}.${image.extension}`;
+  const isCarousel = post.format === 'carousel';
+  const slideLines = isCarousel
+    ? (result.brief.slides.length >= 2 ? result.brief.slides : offlineSlidePlan(post.topic, post.language)).slice(0, 10)
+    : [];
+
+  let image = await generateImage(env, settings, result.brief.visualPrompt, `${post.topic}-${post.tone}`);
+  let mediaKey = `${post.id}-${Date.now()}.${image.extension}`;
   await env.MEDIA.put(mediaKey, image.bytes, {
     httpMetadata: { contentType: image.contentType, cacheControl: 'public, max-age=31536000' },
   });
   push('media-store', `Stored ${Math.round(image.bytes.byteLength / 1024)} KB · ${image.source}`, 'ok', Date.now() - visualStarted);
-  push('thumbstop-check', image.source === 'ai' ? 'On-brief generated cover' : 'Stock cover — review before publishing', image.source === 'ai' ? 'ok' : 'warn', 5);
+
+  let slides: Slide[] = [];
+  let visualSource = image.source;
+  if (isCarousel) {
+    push('carousel-scribe', `${slideLines.length} slides · "${slideLines[0]}"`, 'ok', 12);
+    push('sequence-builder', `Order 1→${slideLines.length}, action on the last slide`, 'ok', 4);
+    push('carousel-visuals', 'One visual language across every slide', 'ok', 5);
+    const built: Slide[] = [
+      { mediaKey, caption: slideLines[0], altText: `${slideLines[0]} — slide 1 of ${slideLines.length}` },
+    ];
+    for (let index = 1; index < slideLines.length; index += 1) {
+      const line = slideLines[index];
+      const frame = await generateImage(
+        env,
+        settings,
+        `${result.brief.visualPrompt} — carousel frame ${index + 1} of ${slideLines.length}: ${line}`,
+        `${post.id}-slide-${index + 1}-${post.tone}`,
+      );
+      const frameKey = `${post.id}-slide-${index + 1}-${Date.now()}.${frame.extension}`;
+      await env.MEDIA.put(frameKey, frame.bytes, {
+        httpMetadata: { contentType: frame.contentType, cacheControl: 'public, max-age=31536000' },
+      });
+      built.push({
+        mediaKey: frameKey,
+        caption: line,
+        altText: `${line} — slide ${index + 1} of ${slideLines.length}`,
+      });
+    }
+    slides = built;
+    visualSource = image.source;
+    push('media-store', `${slides.length} slide images stored`, 'ok', 6);
+  }
+
+  push('thumbstop-check', visualSource === 'ai' ? 'On-brief generated cover' : 'Stock cover — review before publishing', visualSource === 'ai' ? 'ok' : 'warn', 5);
 
   const virality = scoreVirality(result.brief, hashtags);
   push('virality-scorer', `Heuristic score ${virality}/100 (not a prediction)`, 'ok', 7);
@@ -396,6 +435,7 @@ export async function producePost(
     mediaKey,
     visualSource: image.source,
     reelScript: result.brief.reelScript,
+    slides,
     status: scheduledAt ? 'scheduled' : 'ready',
     virality,
     scheduledAt,
@@ -406,7 +446,7 @@ export async function producePost(
   await logEvent(
     env,
     'produce',
-    `Produced "${result.brief.title}" (${virality}/100, ${image.source})`,
+    `Produced "${result.brief.title}" (${virality}/100, ${visualSource}${isCarousel ? `, ${slides.length} slides` : ''})`,
   );
 
   return updated ?? post;
@@ -430,6 +470,23 @@ export async function publishPost(
     return { ok: false, manual: false, post, error: 'Generate the post before publishing' };
   }
   const imageUrl = `${origin}/api/media/${post.mediaKey}`;
+  const slideUrls =
+    post.format === 'carousel'
+      ? post.slides
+          .filter((slide) => !!slide.mediaKey)
+          .slice(0, 10)
+          .map((slide) => `${origin}/api/media/${slide.mediaKey}`)
+      : [];
+
+  if (post.format === 'carousel' && slideUrls.length < 2) {
+    return {
+      ok: false,
+      manual: false,
+      post,
+      error: `A carousel needs 2–10 slides and this post has ${slideUrls.length}. Press Regenerate to build its slides, then publish.`,
+    };
+  }
+
   await updatePost(env, post.id, { status: 'publishing' });
 
   if (!settings.igUserId || !settings.igToken) {
@@ -450,7 +507,7 @@ export async function publishPost(
     };
   }
 
-  const result = await publishToInstagram(settings, post, imageUrl);
+  const result = await publishToInstagram(settings, post, imageUrl, slideUrls);
   if (!result.ok) {
     const failed = (await updatePost(env, post.id, { status: 'failed', error: result.error ?? 'publish failed' })) ?? post;
     await logEvent(env, 'publish_fail', result.error ?? 'publish failed');
